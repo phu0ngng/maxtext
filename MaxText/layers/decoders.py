@@ -259,13 +259,24 @@ class Decoder(nn.Module):
           config=self.config, mesh=self.mesh, layers=pipeline_stage_module, remat_policy=remat_policy
       )
 
+  def _get_checkpoint_dots_with_no_batch_dims_policy(self):
+    """Get checkpoint policy for dots with no batch dimensions. 
+    
+      If TransformerEngine quantization is enabled, the policy will include TransformerEngine GEMM custom ops in addition to JAX's dot_general and scaled_matmul GEMMs.
+    """
+    if self.config.quantization.startswith("te_"):
+      from transformer_engine.jax.checkpoint_policies import dots_and_te_gemms_with_no_batch_dims
+      return dots_and_te_gemms_with_no_batch_dims
+    else:
+      return jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims
+
   def get_remat_policy(self):
     """Get remat policy"""
     policy = None
     cfg = self.config
     if cfg.remat_policy != "none":
       if cfg.remat_policy == "minimal":
-        policy = jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims
+        policy = self._get_checkpoint_dots_with_no_batch_dims_policy()
       elif cfg.remat_policy == "save_dot_with_context_except_mlp":
         policy = jax.checkpoint_policies.save_only_these_names(
             "query_proj",
@@ -317,7 +328,7 @@ class Decoder(nn.Module):
         )
       elif cfg.remat_policy == "minimal_flash":
         policy = jax.checkpoint_policies.save_from_both_policies(
-            jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims,
+            self._get_checkpoint_dots_with_no_batch_dims_policy(),
             jax.checkpoint_policies.save_only_these_names(
                 "context",
             ),
