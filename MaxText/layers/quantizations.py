@@ -685,7 +685,7 @@ class TransformerEngineQuantization(Quantization):
     if not config.quantization.startswith("te_"):
       raise ValueError(f"Invalid TransformerEngine quantization config: {config.quantization}")
 
-    self._recipe = TransformerEngineQuantization._get_recipe(config.te_recipe)
+    self._recipe = TransformerEngineQuantization._get_recipe(config.quantization)
 
   @staticmethod
   def _get_recipe(recipe_name: str):
@@ -712,13 +712,28 @@ class TransformerEngineQuantization(Quantization):
       pp_resource = None,
       cp_resource = "context",
     )
+    recipe = self._recipe
 
-    def te_dot_general_cls(*args, **kwargs):
-      with fp8_autocast(enabled=True, fp8_recipe=self._recipe, mesh_resource=mesh_resource):
-        # TODO: do I need to map any arg names here
-        return te.flax.DenseGeneral(*args, **kwargs)
-    
-    return te_dot_general_cls
+    class TEDotGeneral(te.flax.module.TransformerEngineBase):
+      @nn.compact
+      def __call__(self, x, kernel, dims, **kwargs):
+        with te.fp8_autocast(enabled=True, fp8_recipe=recipe, mesh_resource=mesh_resource):
+
+          print(f"TEDotGeneral: input shape {x.shape}, kernel shape {kernel.shape}, dims {dims}")
+          contracting_dims, batch_dims = dims
+          assert batch_dims == ((), ()), "Batch dimensions must be empty for TransformerEngine dot."
+
+          OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
+          quantizer_set = self.generate_quantizer_set(variable_collection=OVERWRITE_WITH_GRADIENT)
+
+          return te.dense.dense(
+            x,
+            kernel,
+            contracting_dims=contracting_dims,
+            quantizer_set=quantizer_set,
+          )
+
+    return TEDotGeneral
 
   def einsum(self, dtype: DType = jnp.float32):
     """Placeholder for einsum implementation in subclasses."""
