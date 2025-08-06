@@ -520,6 +520,8 @@ def _get_quant_config(config):
     return _get_aqt_fp8_quant_config(config)
   if config.quantization == "aqt_fp8_full":
     return _get_aqt_fp8_default_config(config)
+  if config.quantization.startswith("te_"):
+    return config.quantization
 
   raise ValueError(f"Invalid value configured for quantization {config.quantization}.")
 
@@ -555,6 +557,8 @@ def configure_quantization(config: Config, quant_mode_str: str = "train"):
       return Fp8Quantization()
     elif quant_cfg == "nanoo_fp8":
       return NANOOFp8Quantization()
+    elif isinstance(quant_cfg, str) and quant_cfg.startswith("te_"):
+      return TransformerEngineQuantization(config)
     quant_mode = get_quant_mode(quant_mode_str)
     replicate_scale = config.replicate_quant_scale if config.replicate_quant_scale else False
     return AqtQuantization(quant_dg=quant_cfg, quant_mode=quant_mode, replicate_scale=replicate_scale)
@@ -668,3 +672,54 @@ def maybe_quantize_model(model, config):
     if quantization_provider:
       model = qwix.quantize_model(model, quantization_provider)
   return model
+
+
+class TransformerEngineQuantization(Quantization):
+  """Class for TransformerEngine quantization recipes."""
+
+  def __init__(self, config):
+    """Initialize TransformerEngine quantization."""
+
+    self.quant_mode = "train"
+
+    if not config.quantization.startswith("te_"):
+      raise ValueError(f"Invalid TransformerEngine quantization config: {config.quantization}")
+
+    self._recipe = TransformerEngineQuantization._get_recipe(config.te_recipe)
+
+  @staticmethod
+  def _get_recipe(recipe_name: str):
+    """Get the TransformerEngine recipe based on the name."""
+    from transformer_engine.common import recipe
+    RECIPES = {
+      "te_fp8_delayedscaling": recipe.DelayedScaling,
+      "te_fp8_currentscaling": recipe.Float8CurrentScaling,
+      "te_mxfp8": recipe.MXFP8BlockScaling,
+    }
+    if recipe_name not in RECIPES:
+      raise ValueError(f"Invalid TransformerEngine recipe: {recipe_name}")
+    return RECIPES[recipe_name]()
+
+  def dot_general_cls(self, mesh_axes: Tuple[str, ...] = ()):
+    """Placeholder for dot_general implementation in subclasses."""
+    import transformer_engine.jax as te
+    from transformer_engine.jax.sharding import MeshResource
+    # Inform TransformerEngine of MaxText's physical mesh resources.
+    mesh_resource = MeshResource(
+      dp_resource = "data",
+      tp_resource = "tensor",
+      fsdp_resource = "fsdp",
+      pp_resource = None,
+      cp_resource = "context",
+    )
+
+    def te_dot_general_cls(*args, **kwargs):
+      with fp8_autocast(enabled=True, fp8_recipe=self._recipe, mesh_resource=mesh_resource):
+        # TODO: do I need to map any arg names here
+        return te.flax.DenseGeneral(*args, **kwargs)
+    
+    return te_dot_general_cls
+
+  def einsum(self, dtype: DType = jnp.float32):
+    """Placeholder for einsum implementation in subclasses."""
+    raise ValueError("Einsum is not yet supported for TransformerEngine quantization.")
