@@ -344,6 +344,10 @@ class MlpBlock(nnx.Module):
     self.quant = quant
     self.model_mode = model_mode
 
+    self.te_ln_mlp = None
+    if self.config.quantization.startswith("te_"):
+      self.te_ln_mlp = self.quant.layernorm_mlp(self, rngs=rngs)
+
     if self.use_pre_norm:
       self.mlp_layer_norm = self.get_norm_layer(num_features=in_features)(
           dtype=config.dtype,
@@ -363,7 +367,8 @@ class MlpBlock(nnx.Module):
           weight_dtype=self.weight_dtype,
           kernel_init=self.kernel_init,
           kernel_axes=("embed", "num_activations", "mlp"),
-          quant=self.quant,
+          # When self.te_ln_mlp is available, it will be used instead and these layers are only used to store parameters. Prevent a duplicate unused copy of variables (i.e. amax_history + scale for Delayed Scaling) by disabling the unused quant object here.
+          quant=self.quant if self.te_ln_mlp is None else None,
           use_bias=self.use_bias,
           matmul_precision=self.config.matmul_precision,
           rngs=rngs,
@@ -378,7 +383,8 @@ class MlpBlock(nnx.Module):
             weight_dtype=self.weight_dtype,
             kernel_init=self.kernel_init,
             kernel_axes=("embed", "mlp"),
-            quant=self.quant,
+            # When self.te_ln_mlp is available, it will be used instead and these layers are only used to store parameters. Prevent a duplicate unused copy of variables (i.e. amax_history + scale for Delayed Scaling) by disabling the unused quant object here.
+            quant=self.quant if self.te_ln_mlp is None else None,
             use_bias=self.use_bias,
             matmul_precision=self.config.matmul_precision,
             rngs=rngs,
@@ -392,11 +398,20 @@ class MlpBlock(nnx.Module):
         weight_dtype=self.weight_dtype,
         kernel_init=self.kernel_init,
         kernel_axes=("mlp", "embed"),
-        quant=self.quant,
+        # When self.te_ln_mlp is available, it will be used instead and these layers are only used to store parameters. Prevent a duplicate unused copy of variables (i.e. amax_history + scale for Delayed Scaling) by disabling the unused quant object here.
+        quant=self.quant if self.te_ln_mlp is None else None,
         use_bias=self.use_bias,
         matmul_precision=self.config.matmul_precision,
         rngs=rngs,
     )
+
+    # Initialization must occur after the model params have been created for self.wi and self.wo
+    if self.te_ln_mlp is not None:
+      # Placeholder inputs, actual values including sharding axes don't matter as the modules
+      # do not initialize any parameters. The modules only initialize variables for recipe state (e.g. amax_history + scale for Delayed Scaling)
+      dummy_dot_1_input_axes = ("activation_batch", "activation_norm_length", "activation_embed")
+      dummy_inputs = jnp.zeros((1, 1, in_features), dtype=self.dtype)
+      self.te_ln_mlp = self.te_ln_mlp.lazy_init(dummy_inputs, dummy_dot_1_input_axes)
 
   def get_norm_layer(self, num_features: int):
     """get normalization layer."""
@@ -426,19 +441,21 @@ class MlpBlock(nnx.Module):
     """Applies Transformer MlpBlock module."""
     cfg = self.config
 
+    if self.model_mode == MODEL_MODE_PREFILL:
+      dot_1_input_axes = ("activation_batch",
+                          "prefill_activation_norm_length",
+                          "activation_embed")
+    else:
+      dot_1_input_axes = ("activation_batch",
+                          "activation_norm_length",
+                          "activation_embed")
+
+    if self.te_ln_mlp is not None:
+      return self.te_ln_mlp(inputs, dot_1_input_axes)
 
     if self.mlp_layer_norm is not None:
       inputs = self.mlp_layer_norm(inputs)
-      if self.model_mode == MODEL_MODE_PREFILL:
-        inputs = nn.with_logical_constraint(inputs, ("activation_batch",
-                                                     "prefill_activation_norm_length",
-                                                     "activation_embed")
-                                            )
-      else:
-        inputs = nn.with_logical_constraint(inputs, ("activation_batch",
-                                                     "activation_norm_length",
-                                                     "activation_embed")
-                                            )
+      inputs = nn.with_logical_constraint(inputs, dot_1_input_axes)
 
     # Iterate over specified MLP input activation functions.
     # e.g. ('relu',) or ('gelu', 'linear') for gated-gelu.

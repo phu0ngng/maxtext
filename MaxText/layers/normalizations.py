@@ -56,6 +56,19 @@ class RMSNorm(nnx.Module):
 
   def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
     """Applies layer normalization on the input."""
+    use_te_norm = True # TODO: get access to config to determine if TE norm should be enabled
+    if use_te_norm:
+      from transformer_engine.jax.layernorm import layernorm
+      return layernorm(
+        x,
+        gamma=self.scale.value,
+        beta=None,
+        norm_type="rmsnorm",
+        zero_centered_gamma=False,
+        epsilon=self.epsilon,
+        quantizer=None,
+      )
+
     x = jnp.asarray(x, jnp.float32)
     mean2 = jnp.mean(lax.square(x), axis=-1, keepdims=True)
     y = jnp.asarray(x * lax.rsqrt(mean2 + self.epsilon), self.dtype)

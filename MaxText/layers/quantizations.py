@@ -687,6 +687,14 @@ class TransformerEngineQuantization(Quantization):
 
     self._recipe = TransformerEngineQuantization._get_recipe(config.quantization)
 
+  def __hash__(self):
+    return hash((self.quant_mode, self._recipe))
+
+  def __eq__(self, other):
+    if not isinstance(other, TransformerEngineQuantization):
+      return False
+    return (self.quant_mode, self._recipe) == (other.quant_mode, other._recipe)
+
   @staticmethod
   def _get_recipe(recipe_name: str):
     """Get the TransformerEngine recipe based on the name."""
@@ -700,8 +708,7 @@ class TransformerEngineQuantization(Quantization):
       raise ValueError(f"Invalid TransformerEngine recipe: {recipe_name}")
     return RECIPES[recipe_name]()
 
-  def dot_general_cls(self, mesh_axes: Tuple[str, ...] = ()):
-    """Placeholder for dot_general implementation in subclasses."""
+  def _wrap_in_autocast(self, f):
     import transformer_engine.jax as te
     from transformer_engine.jax.sharding import MeshResource
     # Inform TransformerEngine of MaxText's physical mesh resources.
@@ -714,27 +721,72 @@ class TransformerEngineQuantization(Quantization):
     )
     recipe = self._recipe
 
-    class TEDotGeneral(te.flax.module.TransformerEngineBase):
+    class TEWrapper(te.flax.module.TransformerEngineBase):
+      def generate_quantizer_set(self, postfix: str = ""):
+        OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
+        return super().generate_quantizer_set(postfix=postfix, variable_collection=OVERWRITE_WITH_GRADIENT)
+
       @nn.compact
-      def __call__(self, x, kernel, dims, **kwargs):
+      def __call__(self, *args, **kwargs):
         with te.fp8_autocast(enabled=True, fp8_recipe=recipe, mesh_resource=mesh_resource):
+          return f(self.generate_quantizer_set, *args, **kwargs)
 
-          print(f"TEDotGeneral: input shape {x.shape}, kernel shape {kernel.shape}, dims {dims}")
-          contracting_dims, batch_dims = dims
-          assert batch_dims == ((), ()), "Batch dimensions must be empty for TransformerEngine dot."
+    return TEWrapper
 
-          OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
-          quantizer_set = self.generate_quantizer_set(variable_collection=OVERWRITE_WITH_GRADIENT)
+  def dot_general_cls(self, mesh_axes: Tuple[str, ...] = ()):
+    """Placeholder for dot_general implementation in subclasses."""
+    import transformer_engine.jax as te
 
-          return te.dense.dense(
-            x,
-            kernel,
-            contracting_dims=contracting_dims,
-            quantizer_set=quantizer_set,
-          )
+    def te_dot_general(generate_quantizer_set, x, kernel, dims, **kwargs):
+      contracting_dims, batch_dims = dims
+      assert batch_dims == ((), ()), "Batch dimensions must be empty for TransformerEngine dot."
 
-    return TEDotGeneral
+      quantizer_set = generate_quantizer_set()
+      return te.dense.dense(
+        x,
+        kernel,
+        contracting_dims=contracting_dims,
+        quantizer_set=quantizer_set,
+      )
+
+    return self._wrap_in_autocast(te_dot_general)
 
   def einsum(self, dtype: DType = jnp.float32):
     """Placeholder for einsum implementation in subclasses."""
+    # quant.einsum is only required for MoE or for inference with KVCache.
     raise ValueError("Einsum is not yet supported for TransformerEngine quantization.")
+
+
+  def layernorm_mlp(self, mlp_block, rngs):
+    from MaxText.layers import nnx_wrappers
+
+    cfg = mlp_block.config
+    can_use_te_fused_layernorm = cfg.fused_mlp and mlp_block.use_pre_norm
+    if not can_use_te_fused_layernorm:
+      import warnings
+      warnings.warn("TE layernorm_mlp is only supported when 'fused_mlp' is enabled in the config and MlpBlock.use_pre_norm is True. TE's GEMMs will still be used but TE's fused norm+quantize and fused activations+quantize will not be used.")
+      return None
+
+    def layernorm_mlp_fn(generate_quantizer_set, inputs, dot_1_input_axes):
+      from transformer_engine.jax.layernorm_mlp import layernorm_mlp
+      dense_layer_names = ['wi', 'wo']
+      dense_layers = [getattr(mlp_block, name) for name in dense_layer_names]
+      return layernorm_mlp(
+        inputs,
+        gamma=mlp_block.mlp_layer_norm.scale.value,
+        beta=None,
+        kernels=[dense_layer.kernel.value for dense_layer in dense_layers],
+        biases=[dense_layer.bias.value if dense_layer.use_bias else None for dense_layer in dense_layers],
+        norm_type="rmsnorm",
+        zero_centered_gamma=False,
+        epsilon=mlp_block.mlp_layer_norm.epsilon,
+        dot_1_input_axes=dot_1_input_axes,
+        ffn1_ckpt_name="mlpwi",
+        ffn2_ckpt_name="mlpwo",
+        activation_type=mlp_block.activations,
+        quantizer_sets=[generate_quantizer_set(postfix=name) for name in dense_layer_names],
+      )
+
+    linen_layernorm_mlp = self._wrap_in_autocast(layernorm_mlp_fn)
+
+    return nnx_wrappers.ToNNX(linen_layernorm_mlp(), rngs=rngs)
