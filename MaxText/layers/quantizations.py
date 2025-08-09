@@ -709,6 +709,23 @@ class TransformerEngineQuantization(Quantization):
     return RECIPES[recipe_name]()
 
   def _wrap_in_autocast(self, f):
+    """ Wraps the given function `f` in a Flax linen module and fp8_autocast.
+
+    Wraps the given function in a Flax linen module. This module does not store any Flax parameters
+    but can store Flax variables for quantizers if required by the recipe.
+
+    The first argument to the provided function must be 'generate_quantizer_set'. 'generate_quantizer_set' is a function
+    that can be called to generate a TransformerEngine/JAX quantizer set object used in TransformerEngine/JAX APIs.
+
+    The given function 'f' will be called inside an fp8_autocast context with the given recipe set based on this TransformerEngineQuantization object.
+
+    Args:
+      f: The function to wrap. The first argument must be 'generate_quantizer_set'.
+
+    Returns:
+      A Flax linen module that wraps the given function.
+    """
+
     import transformer_engine.jax as te
     from transformer_engine.jax.sharding import MeshResource
     # Inform TransformerEngine of MaxText's physical mesh resources.
@@ -758,6 +775,16 @@ class TransformerEngineQuantization(Quantization):
 
 
   def layernorm_mlp(self, mlp_block, rngs):
+    """ Creates an NNX module for TransformerEngine's layernorm_mlp with support for fused norm+quantization and fused activation+quantization.
+
+    Args:
+      mlp_block: The MLP block to use.
+      rngs: NNX rngs
+
+    Returns:
+      An NNX module for TransformerEngine's layernorm_mlp. This module will create the Flax variables for recipe state if the recipe requires it.
+    """
+
     from MaxText.layers import nnx_wrappers
 
     cfg = mlp_block.config
