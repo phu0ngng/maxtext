@@ -738,12 +738,12 @@ class TransformerEngineQuantization(Quantization):
       pp_resource = None,
       cp_resource = "context",
     )
-    recipe = self._recipe
+    fp8_recipe = self._recipe
 
     class TEWrapper(te.flax.module.TransformerEngineBase):
       def generate_quantizer_set(self, postfix: str = ""):
         OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
-        return super().generate_quantizer_set(postfix=postfix, variable_collection=OVERWRITE_WITH_GRADIENT, recipe=recipe)
+        return super().generate_quantizer_set(postfix=postfix, variable_collection=OVERWRITE_WITH_GRADIENT, fp8_recipe=fp8_recipe)
 
       @nn.compact
       def __call__(self, *args, **kwargs):
