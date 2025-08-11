@@ -174,7 +174,7 @@ class DenseGeneral(nnx.Module):
       quant_dot_general = nnx_wrappers.ToNNX(dot_general_linen, rngs=rngs)
       self._quant_dot_general_name = f"{type(dot_general_linen).__name__}_0"
       setattr(self, self._quant_dot_general_name, quant_dot_general)
-      dummy_inputs = jnp.zeros((1, *self.in_features_shape), dtype=self.dtype)
+      dummy_inputs = jnp.zeros((32, *self.in_features_shape), dtype=self.dtype)
       self(dummy_inputs, _initializing=True)
     else:
       self._quant_dot_general_name = None
@@ -410,7 +410,7 @@ class MlpBlock(nnx.Module):
       # Placeholder inputs, actual values including sharding axes don't matter as the modules
       # do not initialize any parameters. The modules only initialize variables for recipe state (e.g. amax_history + scale for Delayed Scaling)
       dummy_dot_1_input_axes = ("activation_batch", "activation_norm_length", "activation_embed")
-      dummy_inputs = jnp.zeros((1, 1, in_features), dtype=self.dtype)
+      dummy_inputs = jnp.zeros((1, 32, in_features), dtype=self.dtype)
       self.te_ln_mlp = self.te_ln_mlp.lazy_init(dummy_inputs, dummy_dot_1_input_axes)
 
   def get_norm_layer(self, num_features: int):

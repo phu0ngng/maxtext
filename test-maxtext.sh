@@ -226,7 +226,7 @@ print_var dcn_FSDP
 print_var ici_TP
 print_var PP
 
-MAXTEXT_DIR="/mnt/jberchtold/eos-lustre-home/maxtext"
+MAXTEXT_DIR="/mnt/jberchtold/lustre-home/maxtext"
 pushd ${MAXTEXT_DIR}
 
 ## Launch
