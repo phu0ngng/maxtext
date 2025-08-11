@@ -61,7 +61,8 @@ class RMSNorm(nnx.Module):
       from transformer_engine.jax.layernorm import layernorm
       return layernorm(
         x,
-        gamma=self.scale.value,
+        # Gamma must be casted to x.dtype as TransformerEngine's kernels only support x.dtype == gamma.dtype. Internal compute dtype will still be float32
+        gamma=self.scale.value.astype(x.dtype),
         beta=None,
         norm_type="rmsnorm",
         zero_centered_gamma=False,

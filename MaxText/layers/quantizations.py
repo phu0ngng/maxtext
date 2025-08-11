@@ -802,7 +802,8 @@ class TransformerEngineQuantization(Quantization):
       dense_layers = [getattr(mlp_block, name) for name in dense_layer_names]
       return layernorm_mlp(
         inputs,
-        gamma=mlp_block.mlp_layer_norm.scale.value,
+        # Gamma must be casted to inputs.dtype as TransformerEngine's kernels only support inputs.dtype == gamma.dtype. Internal compute dtype will still be float32
+        gamma=mlp_block.mlp_layer_norm.scale.value.astype(inputs.dtype),
         beta=None,
         kernels=[dense_layer.kernel.value for dense_layer in dense_layers],
         biases=[dense_layer.bias.value if dense_layer.use_bias else None for dense_layer in dense_layers],
