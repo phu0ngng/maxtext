@@ -708,16 +708,18 @@ class TransformerEngineQuantization(Quantization):
       raise ValueError(f"Invalid TransformerEngine recipe: {recipe_name}")
     return RECIPES[recipe_name]()
 
-  def _wrap_in_autocast(self, f):
-    """ Wraps the given function `f` in a Flax linen module and fp8_autocast.
+  def _wrap(self, f):
+    """ Wraps the given function `f` to support TransformerEngine quantization.
 
-    Wraps the given function in a Flax linen module. This module does not store any Flax parameters
+    This method does a couple things:
+
+
+    1. Wraps the given function in a context that specifies MaxText's physical mesh axes to TransformerEngine. This ensures our collective operations in TransformerEngine are using the correct axes.
+
+    2. Wraps the given function in a Flax linen module. This module does not store any Flax parameters
     but can store Flax variables for quantizers if required by the recipe.
 
-    The first argument to the provided function must be 'generate_quantizer_set'. 'generate_quantizer_set' is a function
-    that can be called to generate a TransformerEngine/JAX quantizer set object used in TransformerEngine/JAX APIs.
-
-    The given function 'f' will be called inside an fp8_autocast context with the given recipe set based on this TransformerEngineQuantization object.
+    3. When the wrapper is called, it provides an additional argument to the given function `f`, 'generate_quantizer_set' as the first argument. 'generate_quantizer_set' is a function that can be called to generate a TransformerEngine/JAX quantizer set object used in TransformerEngine/JAX APIs. 'generate_quantizer_set' will generate quantizers based on the recipe of this TransformerEngineQuantizer object.
 
     Args:
       f: The function to wrap. The first argument must be 'generate_quantizer_set'.
@@ -727,7 +729,7 @@ class TransformerEngineQuantization(Quantization):
     """
 
     import transformer_engine.jax as te
-    from transformer_engine.jax.sharding import MeshResource
+    from transformer_engine.jax.sharding import global_shard_guard, MeshResource
     # Inform TransformerEngine of MaxText's physical mesh resources.
     mesh_resource = MeshResource(
       dp_resource = "data",
@@ -741,11 +743,11 @@ class TransformerEngineQuantization(Quantization):
     class TEWrapper(te.flax.module.TransformerEngineBase):
       def generate_quantizer_set(self, postfix: str = ""):
         OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
-        return super().generate_quantizer_set(postfix=postfix, variable_collection=OVERWRITE_WITH_GRADIENT)
+        return super().generate_quantizer_set(postfix=postfix, variable_collection=OVERWRITE_WITH_GRADIENT, recipe=recipe)
 
       @nn.compact
       def __call__(self, *args, **kwargs):
-        with te.fp8_autocast(enabled=True, fp8_recipe=recipe, mesh_resource=mesh_resource):
+        with global_shard_guard(mesh_resource):
           return f(self.generate_quantizer_set, *args, **kwargs)
 
     return TEWrapper
@@ -766,7 +768,7 @@ class TransformerEngineQuantization(Quantization):
         quantizer_set=quantizer_set,
       )
 
-    return self._wrap_in_autocast(te_dot_general)
+    return self._wrap(te_dot_general)
 
   def einsum(self, dtype: DType = jnp.float32):
     """Placeholder for einsum implementation in subclasses."""
@@ -814,6 +816,6 @@ class TransformerEngineQuantization(Quantization):
         quantizer_sets=[generate_quantizer_set(postfix=name) for name in dense_layer_names],
       )
 
-    linen_layernorm_mlp = self._wrap_in_autocast(layernorm_mlp_fn)
+    linen_layernorm_mlp = self._wrap(layernorm_mlp_fn)
 
     return nnx_wrappers.ToNNX(linen_layernorm_mlp(), rngs=rngs)
