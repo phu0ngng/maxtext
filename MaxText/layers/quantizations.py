@@ -708,6 +708,16 @@ class TransformerEngineQuantization(Quantization):
       raise ValueError(f"Invalid TransformerEngine recipe: {recipe_name}")
     return RECIPES[recipe_name]()
 
+  def get_block_size(self):
+    """ Get the block size for quantization for recipes that require blocks.
+
+    If there is no block requirement for the current recipe, returns 1.
+    """
+    from transformer_engine.common import recipe
+    if isinstance(self._recipe, recipe.MXFP8BlockScaling):
+      return 32
+    return 1
+
   def _wrap(self, f):
     """ Wraps the given function `f` to support TransformerEngine quantization.
 
