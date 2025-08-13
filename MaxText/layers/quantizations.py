@@ -520,6 +520,8 @@ def _get_quant_config(config):
     return _get_aqt_fp8_quant_config(config)
   if config.quantization == "aqt_fp8_full":
     return _get_aqt_fp8_default_config(config)
+  if config.quantization.startswith("te_"):
+    return config.quantization
 
   raise ValueError(f"Invalid value configured for quantization {config.quantization}.")
 
@@ -555,6 +557,8 @@ def configure_quantization(config: Config, quant_mode_str: str = "train"):
       return Fp8Quantization()
     elif quant_cfg == "nanoo_fp8":
       return NANOOFp8Quantization()
+    elif isinstance(quant_cfg, str) and quant_cfg.startswith("te_"):
+      return TransformerEngineQuantization(config)
     quant_mode = get_quant_mode(quant_mode_str)
     replicate_scale = config.replicate_quant_scale if config.replicate_quant_scale else False
     return AqtQuantization(quant_dg=quant_cfg, quant_mode=quant_mode, replicate_scale=replicate_scale)
@@ -668,3 +672,161 @@ def maybe_quantize_model(model, config):
     if quantization_provider:
       model = qwix.quantize_model(model, quantization_provider)
   return model
+
+
+class TransformerEngineQuantization(Quantization):
+  """Class for TransformerEngine quantization recipes."""
+
+  def __init__(self, config):
+    """Initialize TransformerEngine quantization."""
+
+    self.quant_mode = "train"
+
+    if not config.quantization.startswith("te_"):
+      raise ValueError(f"Invalid TransformerEngine quantization config: {config.quantization}")
+
+    self._recipe = TransformerEngineQuantization._get_recipe(config.quantization)
+
+  def __hash__(self):
+    return hash((self.quant_mode, self._recipe))
+
+  def __eq__(self, other):
+    if not isinstance(other, TransformerEngineQuantization):
+      return False
+    return (self.quant_mode, self._recipe) == (other.quant_mode, other._recipe)
+
+  @staticmethod
+  def _get_recipe(recipe_name: str):
+    """Get the TransformerEngine recipe based on the name."""
+    from transformer_engine.common import recipe
+    RECIPES = {
+      "te_fp8_delayedscaling": recipe.DelayedScaling,
+      "te_fp8_currentscaling": recipe.Float8CurrentScaling,
+      "te_mxfp8": recipe.MXFP8BlockScaling,
+    }
+    if recipe_name not in RECIPES:
+      raise ValueError(f"Invalid TransformerEngine recipe: {recipe_name}")
+    return RECIPES[recipe_name]()
+
+  def get_block_size(self):
+    """ Get the block size for quantization for recipes that require blocks.
+
+    If there is no block requirement for the current recipe, returns 1.
+    """
+    from transformer_engine.common import recipe
+    if isinstance(self._recipe, recipe.MXFP8BlockScaling):
+      return 32
+    return 1
+
+  def _wrap(self, f):
+    """ Wraps the given function `f` to support TransformerEngine quantization.
+
+    This method does a couple things:
+
+
+    1. Wraps the given function in a context that specifies MaxText's physical mesh axes to TransformerEngine. This ensures our collective operations in TransformerEngine are using the correct axes.
+
+    2. Wraps the given function in a Flax linen module. This module does not store any Flax parameters
+    but can store Flax variables for quantizers if required by the recipe.
+
+    3. When the wrapper is called, it provides an additional argument to the given function `f`, 'generate_quantizer_set' as the first argument. 'generate_quantizer_set' is a function that can be called to generate a TransformerEngine/JAX quantizer set object used in TransformerEngine/JAX APIs. 'generate_quantizer_set' will generate quantizers based on the recipe of this TransformerEngineQuantizer object.
+
+    Args:
+      f: The function to wrap. The first argument must be 'generate_quantizer_set'.
+
+    Returns:
+      A Flax linen module that wraps the given function.
+    """
+
+    import transformer_engine.jax as te
+    from transformer_engine.jax.sharding import global_shard_guard, MeshResource
+    # Inform TransformerEngine of MaxText's physical mesh resources.
+    mesh_resource = MeshResource(
+      dp_resource = "data",
+      tp_resource = "tensor",
+      fsdp_resource = "fsdp",
+      pp_resource = None,
+      cp_resource = "context",
+    )
+    fp8_recipe = self._recipe
+
+    class TEWrapper(te.flax.module.TransformerEngineBase):
+      def generate_quantizer_set(self, postfix: str = ""):
+        OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
+        return super().generate_quantizer_set(postfix=postfix, variable_collection=OVERWRITE_WITH_GRADIENT, fp8_recipe=fp8_recipe)
+
+      @nn.compact
+      def __call__(self, *args, **kwargs):
+        with global_shard_guard(mesh_resource):
+          return f(self.generate_quantizer_set, *args, **kwargs)
+
+    return TEWrapper
+
+  def dot_general_cls(self, mesh_axes: Tuple[str, ...] = ()):
+    """Placeholder for dot_general implementation in subclasses."""
+    import transformer_engine.jax as te
+
+    def te_dot_general(generate_quantizer_set, x, kernel, dims, **kwargs):
+      contracting_dims, batch_dims = dims
+      assert batch_dims == ((), ()), "Batch dimensions must be empty for TransformerEngine dot."
+
+      quantizer_set = generate_quantizer_set()
+      return te.dense.dense(
+        x,
+        kernel,
+        contracting_dims=contracting_dims,
+        quantizer_set=quantizer_set,
+      )
+
+    return self._wrap(te_dot_general)
+
+  def einsum(self, dtype: DType = jnp.float32):
+    """Placeholder for einsum implementation in subclasses."""
+    # quant.einsum is only required for MoE or for inference with KVCache.
+    raise ValueError("Einsum is not yet supported for TransformerEngine quantization.")
+
+
+  def layernorm_mlp(self, mlp_block, rngs):
+    """ Creates an NNX module for TransformerEngine's layernorm_mlp with support for fused norm+quantization and fused activation+quantization.
+
+    Args:
+      mlp_block: The MLP block to use.
+      rngs: NNX rngs
+
+    Returns:
+      An NNX module for TransformerEngine's layernorm_mlp. This module will create the Flax variables for recipe state if the recipe requires it.
+    """
+
+    from MaxText.layers import nnx_wrappers
+
+    cfg = mlp_block.config
+    can_use_te_fused_layernorm = cfg.fused_mlp and mlp_block.use_pre_norm
+    if not can_use_te_fused_layernorm:
+      import warnings
+      warnings.warn("TE layernorm_mlp is only supported when 'fused_mlp' is enabled in the config and MlpBlock.use_pre_norm is True. TE's GEMMs will still be used but TE's fused norm+quantize and fused activations+quantize will not be used.")
+      return None
+
+    def layernorm_mlp_fn(generate_quantizer_set, inputs, dot_1_input_axes):
+      from transformer_engine.jax.layernorm_mlp import layernorm_mlp
+      dense_layer_names = ['wi', 'wo']
+      dense_layers = [getattr(mlp_block, name) for name in dense_layer_names]
+      return layernorm_mlp(
+        inputs,
+        # Gamma must be casted to inputs.dtype as TransformerEngine's kernels only support inputs.dtype == gamma.dtype. Internal compute dtype will still be float32
+        gamma=mlp_block.mlp_layer_norm.scale.value.astype(inputs.dtype),
+        beta=None,
+        kernels=[dense_layer.kernel.value for dense_layer in dense_layers],
+        biases=[dense_layer.bias.value if dense_layer.use_bias else None for dense_layer in dense_layers],
+        norm_type="rmsnorm",
+        zero_centered_gamma=False,
+        epsilon=mlp_block.mlp_layer_norm.epsilon,
+        dot_1_input_axes=dot_1_input_axes,
+        ffn1_ckpt_name="mlpwi",
+        ffn2_ckpt_name="mlpwo",
+        activation_type=mlp_block.activations,
+        quantizer_sets=[generate_quantizer_set(postfix=name) for name in dense_layer_names],
+      )
+
+    linen_layernorm_mlp = self._wrap(layernorm_mlp_fn)
+
+    return nnx_wrappers.ToNNX(linen_layernorm_mlp(), rngs=rngs)

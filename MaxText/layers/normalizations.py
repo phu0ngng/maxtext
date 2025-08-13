@@ -14,6 +14,7 @@
 
 """Normalization Layers."""
 
+import os
 from typing import Any, Tuple, Optional
 
 from flax import linen as nn
@@ -56,6 +57,20 @@ class RMSNorm(nnx.Module):
 
   def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
     """Applies layer normalization on the input."""
+    use_te_norm = os.getenv("NVTE_JAX_MAXTEXT_USE_TE_NORM", "0") == "1"
+    if use_te_norm:
+      from transformer_engine.jax.layernorm import layernorm
+      return layernorm(
+        x,
+        # Gamma must be casted to x.dtype as TransformerEngine's kernels only support x.dtype == gamma.dtype. Internal compute dtype will still be float32
+        gamma=self.scale.value.astype(x.dtype),
+        beta=None,
+        norm_type="rmsnorm",
+        zero_centered_gamma=False,
+        epsilon=self.epsilon,
+        quantizer=None,
+      )
+
     x = jnp.asarray(x, jnp.float32)
     mean2 = jnp.mean(lax.square(x), axis=-1, keepdims=True)
     y = jnp.asarray(x * lax.rsqrt(mean2 + self.epsilon), self.dtype)
