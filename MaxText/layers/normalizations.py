@@ -14,6 +14,7 @@
 
 """Normalization Layers."""
 
+import os
 from typing import Any, Tuple, Optional
 
 from flax import linen as nn
@@ -56,7 +57,7 @@ class RMSNorm(nnx.Module):
 
   def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
     """Applies layer normalization on the input."""
-    use_te_norm = True # TODO: get access to config to determine if TE norm should be enabled
+    use_te_norm = os.getenv("NVTE_JAX_MAXTEXT_USE_TE_NORM", "0") == "1"
     if use_te_norm:
       from transformer_engine.jax.layernorm import layernorm
       return layernorm(
