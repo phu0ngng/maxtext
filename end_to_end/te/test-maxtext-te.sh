@@ -47,7 +47,7 @@ usage() {
     exit $1
 }
 
-args=$(getopt -o a:b:s:o:n:h --long additional-args:,mem-fraction:,model-name:,decoder-block:,attn-type:,remat-policy:,batch-per-gpu:,dtype:,quantization:,steps:,help,multiprocess,output:,data-parallel:,fsdp:,tensor-parallel:,tensor-sequence-parallel:,pipeline-parallel:,nodes,trace: -- "$@")
+args=$(getopt -o a:b:s:o:n:h --long additional-args:,mem-fraction:,model-name:,decoder-block:,attn-type:,remat-policy:,batch-per-gpu:,dtype:,quantization:,steps:,help,multiprocess,output:,data-parallel:,fsdp:,tensor-parallel:,tensor-sequence-parallel:,pipeline-parallel:,nodes: -- "$@")
 if [[ $? -ne 0 ]]; then
     exit $1
 fi
@@ -75,7 +75,6 @@ TP=1
 TPSP=1
 PP=1
 NODES=1
-TRACE=false
 ENABLE_FUSED_ATTN=0
 ADDITIONAL_ARGS=""
 
@@ -158,10 +157,6 @@ while [ : ]; do
         NODES="$2"
         shift 2
         ;;
-    -t | --trace)
-        TRACE="$2"
-        shift 2
-        ;;
     -h | --help)
         usage 1
         ;;
@@ -241,7 +236,6 @@ print_var STEPS
 print_var NGPUS
 print_var HARDWARE
 print_var OUTPUT
-print_var TRACE
 print_var ENABLE_FUSED_ATTN
 print_var DP
 print_var ici_DP
@@ -252,8 +246,6 @@ print_var ici_TP
 print_var ici_TPSP
 print_var PP
 
-# SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# MAXTEXT_DIR="$(realpath "$SCRIPT_DIR/../../")"
 MAXTEXT_DIR="${MAXTEXT_DIR:-/opt/maxtext}"
 pushd ${MAXTEXT_DIR}
 
@@ -286,10 +278,6 @@ export XLA_FLAGS="$BASE_XLA_FLAGS ${XLA_FLAGS:-}"
 
 RUN_NAME="logdir" ## the RUN_NAME cannot be changed
 
-PROFILE_SKIP_STEPS=$(($STEPS-1))
-PROFILER=\'\'   # empty = no profiler
-[[ "$TRACE" == "true" ]] && PROFILER="xplane"
-
 if [ -z "$DECODER_BLOCK" ]; then
 
     # this part could be used to test different model ootb
@@ -316,9 +304,6 @@ if [ -z "$DECODER_BLOCK" ]; then
         dcn_tensor_parallelism=1 \
         ici_tensor_sequence_parallelism=${ici_TPSP} \
         dcn_tensor_sequence_parallelism=1 \
-        profiler=${PROFILER}\
-        skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS}\
-        profiler_steps=1\
         ${ADDITIONAL_ARGS}"
 else
 # this is essentially used for CI run
@@ -353,9 +338,6 @@ else
         dcn_tensor_parallelism=1 \
         ici_tensor_sequence_parallelism=${ici_TPSP} \
         dcn_tensor_sequence_parallelism=1 \
-        profiler=${PROFILER}\
-        skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS}\
-        profiler_steps=1\
         ${ADDITIONAL_ARGS}"
 
 fi
