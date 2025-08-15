@@ -30,11 +30,6 @@ usage() {
     echo "  --tensor-parallel          Tensor parallelism to use. Defaults to 1. If specified, FSDP dims will be inferred."
     echo "  --pipeline-parallel        Pipeline parallelism to use. Defaults to 1 for no pipelining."
     echo "  -n, --nodes                Number of nodes."
-    echo "  --te-norm                  Use TE norm. Defaults to false."
-    echo "  --te-dense                 Use TE dense. Defaults to false."
-    echo "  --te-mlp                   Use TE mlp. Defaults to false."
-    echo "  --te-fp8                   Use TE fp8. Defaults to false."
-    echo "  --te-recipe                Use TE recipe. Defaults to none."
     echo "  -h, --help                 Print usage. Some examples:
                                        1. test-maxtext.sh -b 2 --model-name=gpt3-52k
                                        2. test-maxtext.sh -b 2 --model-name=gemma-2b --dtype=fp8
@@ -52,7 +47,7 @@ usage() {
     exit $1
 }
 
-args=$(getopt -o a:b:s:o:n:h --long additional-args:,mem-fraction:,model-name:,decoder-block:,attn-type:,remat-policy:,batch-per-gpu:,dtype:,steps:,help,multiprocess,output:,data-parallel:,fsdp:,tensor-parallel:,tensor-sequence-parallel:,pipeline-parallel:,nodes,trace:,te-norm:,te-dense:,te-mlp:,te-fp8:,te-recipe: -- "$@")
+args=$(getopt -o a:b:s:o:n:h --long additional-args:,mem-fraction:,model-name:,decoder-block:,attn-type:,remat-policy:,batch-per-gpu:,dtype:,quantization:,steps:,help,multiprocess,output:,data-parallel:,fsdp:,tensor-parallel:,tensor-sequence-parallel:,pipeline-parallel:,nodes,trace: -- "$@")
 if [[ $? -ne 0 ]]; then
     exit $1
 fi
@@ -72,6 +67,7 @@ ATTN_TYPE="dot_product"
 REMAT_POLICY="minimal"
 BATCH_PER_GPU=2
 DTYPE="bfloat16"
+QUANTIZATION=""
 STEPS=100
 DP=1
 FSDP=1
@@ -81,11 +77,6 @@ PP=1
 NODES=1
 TRACE=false
 ENABLE_FUSED_ATTN=0
-TE_NORM=false
-TE_DENSE=false
-TE_MLP=false
-TE_FP8=false
-TE_RECIPE=""
 ADDITIONAL_ARGS=""
 
 eval set -- "$args"
@@ -121,6 +112,10 @@ while [ : ]; do
         ;;
     --dtype)
         DTYPE="$2"
+        shift 2
+        ;;
+    --quantization)
+        QUANTIZATION="$2"
         shift 2
         ;;
     --enable-te)
@@ -167,26 +162,6 @@ while [ : ]; do
         TRACE="$2"
         shift 2
         ;;
-    --te-norm)
-        TE_NORM="$2"
-        shift 2
-        ;;
-    --te-dense)
-        TE_DENSE="$2"
-        shift 2
-        ;;
-    --te-mlp)
-        TE_MLP="$2"
-        shift 2
-        ;;
-    --te-fp8)
-        TE_FP8="$2"
-        shift 2
-        ;;
-    --te-recipe)
-        TE_RECIPE="$2"
-        shift 2
-        ;;
     -h | --help)
         usage 1
         ;;
@@ -214,7 +189,15 @@ fi
 
 # for fp8 runs
 if [ $DTYPE == "fp8" ]; then
+    if [ -n "$QUANTIZATION" ]; then
+        echo "Error: --quantization cannot be used with --dtype=fp8"
+        exit 1
+    fi
     ADDITIONAL_ARGS+=" quantization=$DTYPE"
+fi
+
+if [ -n "$QUANTIZATION" ]; then
+    ADDITIONAL_ARGS+=" quantization=$QUANTIZATION"
 fi
 
 GPUS_PER_NODE=$(nvidia-smi -L | grep -c '^GPU')
@@ -253,6 +236,7 @@ print_var ATTN_TYPE
 print_var REMAT_POLICY
 print_var BATCH_PER_GPU
 print_var DTYPE
+print_var QUANTIZATION
 print_var STEPS
 print_var NGPUS
 print_var HARDWARE
@@ -268,8 +252,9 @@ print_var ici_TP
 print_var ici_TPSP
 print_var PP
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-MAXTEXT_DIR="$(realpath "$SCRIPT_DIR/../../")"
+# SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# MAXTEXT_DIR="$(realpath "$SCRIPT_DIR/../../")"
+MAXTEXT_DIR="${MAXTEXT_DIR:-/opt/maxtext}"
 pushd ${MAXTEXT_DIR}
 
 ## Launch
@@ -334,11 +319,6 @@ if [ -z "$DECODER_BLOCK" ]; then
         profiler=${PROFILER}\
         skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS}\
         profiler_steps=1\
-        te_norm=${TE_NORM} \
-        te_dense_general=${TE_DENSE} \
-        te_mlp=${TE_MLP} \
-        te_fp8=${TE_FP8} \
-        te_recipe=${TE_RECIPE} \
         ${ADDITIONAL_ARGS}"
 else
 # this is essentially used for CI run
@@ -376,16 +356,11 @@ else
         profiler=${PROFILER}\
         skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS}\
         profiler_steps=1\
-        te_norm=${TE_NORM} \
-        te_dense_general=${TE_DENSE} \
-        te_mlp=${TE_MLP} \
-        te_fp8=${TE_FP8} \
-        te_recipe=${TE_RECIPE} \
         ${ADDITIONAL_ARGS}"
 
 fi
 
 echo "Command: python3 $RUN_SETTINGS"
-PYTHONPATH=${MAXTEXT_DIR}:\$PYTHONPATH python3 $RUN_SETTINGS
+python3 $RUN_SETTINGS
 
 echo "Output at ${OUTPUT}"
