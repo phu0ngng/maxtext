@@ -156,7 +156,7 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   # MaxText FP8 baseline
   test="maxtext_fp8"
   run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=fp8 $BASE_ARGS $OTHER_ARGS"
+    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --dtype=fp8 $BASE_ARGS $OTHER_ARGS"
 
   # TE variants
   for recipe in "${TE_RECIPES[@]}"; do

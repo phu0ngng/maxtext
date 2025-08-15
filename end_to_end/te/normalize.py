@@ -53,7 +53,7 @@ for key in key_order:
             normalized = "1.000" if has_baseline else "-"
         elif has_baseline and mean != "NA":
             try:
-                normalized = f"{float(mean)/base_mean_val:.3f}"
+                normalized = f"{(float(mean) / base_mean_val - 1) * 100:.2f}%"
             except Exception:
                 normalized = "-"
         else:
