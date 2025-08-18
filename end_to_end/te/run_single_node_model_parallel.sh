@@ -68,7 +68,7 @@ n_gpus=$(nvidia-smi -L | wc -l)
 half_gpus=$((n_gpus / 2))
 # List of experiments: <DP> <TP> <TPSP> <FSDP>
 experiments=(
-  "1        1           1           1"        # Single GPU
+  # "1        1           1           1"        # Single GPU
   "1        $n_gpus     1           1"        # Single DP, full TP
   "$n_gpus  1           1           1"        # Full DP, single TP
   "2        $half_gpus  1           1"        # DP=2, TP=half GPUs
@@ -125,7 +125,15 @@ else:
 
 PROFILE_SKIP_STEPS=$(($STEPS-1))
 PROFILE_ARG=""
-[[ "$TRACE" == "true" ]] && PROFILE_ARG="profiler=xplane skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1 base_num_decoder_layers=1"
+original_num_decoder_layers=1
+if [[ "$TRACE" == "true" ]]; then
+  PROFILE_ARG="profiler=xplane skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1"
+  # Updating the model config file as we can't pass base_num_decoder_layers=1 in additional-args
+  MODEL_CONFIG="$MAXTEXT_DIR/MaxText/configs/models/$MODEL.yml"
+  original_num_decoder_layers=$(grep "base_num_decoder_layers" "$MODEL_CONFIG" | awk -F': ' '{print $2}')
+  sed -i 's/base_num_decoder_layers: .*/base_num_decoder_layers: 1/' "$MODEL_CONFIG"
+  echo "=== Setting base_num_decoder_layers=1 in $MODEL_CONFIG for tracing"
+fi
 
 BASE_ARGS="--model $MODEL --steps $STEPS"
 # Need to be with four escape quotes
@@ -167,6 +175,12 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
       "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
   done
 done
+
+# Updating the model config file back if modified
+if [[ "$TRACE" == "true" ]]; then
+  sed -i 's/base_num_decoder_layers: .*/base_num_decoder_layers: "$original_num_decoder_layers"/' "$MODEL_CONFIG"
+  echo "=== Setting base_num_decoder_layers back to $original_num_decoder_layers in $MODEL_CONFIG"
+fi
 
 OUTPUT_FORMAT="txt" # txt or csv
 echo "=== Experiments finished. Raw CSV at $CSV"
