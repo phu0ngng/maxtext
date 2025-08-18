@@ -122,12 +122,12 @@ else:
 }
 
 PROFILE_SKIP_STEPS=$(($STEPS-1))
-PROFILER=\'\'   # empty = no profiler
-[[ "$TRACE" == "true" ]] && PROFILER="xplane"
+PROFILE_ARG=""
+[[ "$TRACE" == "true" ]] && PROFILE_ARG="profiler=xplane skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1 base_num_decoder_layers=1"
 
 BASE_ARGS="--model $MODEL --steps $STEPS"
 # Need to be with four escape quotes
-OTHER_ARGS="--additional-args=\"\"\"fused_mlp=true shardy=false profiler=${PROFILER} skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1\"\"\""  
+OTHER_ARGS="--additional-args=\"\"\"fused_mlp=true shardy=false ${PROFILE_ARG}\"\"\""
 TE_RECIPES=("te_fp8_delayedscaling" "te_mxfp8")
 
 export NVTE_JAX_CUSTOM_CALLS='NormFwdPrimitive=false,NormBwdPrimitive=false'
@@ -141,8 +141,8 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   exp="${experiments[$i]}"
   echo "Running experiment: $exp"
   read dp tp tpsp fsdp <<< "$exp"
-  
-  n_used_gpus=$((dp * tp * tpsp * fsdp)) 
+
+  n_used_gpus=$((dp * tp * tpsp * fsdp))
   if (( n_used_gpus > n_gpus )); then
     echo "Error: requested $n_used_gpus GPUs, but only $n_gpus are available."
     exit 1
@@ -156,7 +156,7 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   # MaxText FP8 baseline
   test="maxtext_fp8"
   run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --dtype=fp8 $BASE_ARGS $OTHER_ARGS"
+    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=fp8 $BASE_ARGS $OTHER_ARGS"
 
   # TE variants
   for recipe in "${TE_RECIPES[@]}"; do
