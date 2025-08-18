@@ -68,7 +68,7 @@ n_gpus=$(nvidia-smi -L | wc -l)
 half_gpus=$((n_gpus / 2))
 # List of experiments: <DP> <TP> <TPSP> <FSDP>
 experiments=(
-  # "1        1           1           1"        # Single GPU
+  "1        1           1           1"        # Single GPU
   "1        $n_gpus     1           1"        # Single DP, full TP
   "$n_gpus  1           1           1"        # Full DP, single TP
   "2        $half_gpus  1           1"        # DP=2, TP=half GPUs
