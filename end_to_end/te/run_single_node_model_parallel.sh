@@ -43,6 +43,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+[[ "$TRACE" == "true" ]] && OUTPUT_DIR_TAG="trace${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}"
+
 # Now your variables are set as needed
 echo "MODEL=$MODEL"
 echo "OUTPUT_DIR_TAG=$OUTPUT_DIR_TAG"
