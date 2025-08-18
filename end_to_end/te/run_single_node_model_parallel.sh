@@ -7,6 +7,7 @@ OUTPUT_DIR_TAG=""
 STEPS=50
 TRACE=false
 SINGLE_GPU_RUNS=true
+NUM_DECODER_LAYERS="" # unset
 
 # Parse keyword-style arguments
 while [[ $# -gt 0 ]]; do
@@ -31,17 +32,25 @@ while [[ $# -gt 0 ]]; do
             SINGLE_GPU_RUNS="$2"
             shift 2
             ;;
+        --num-decoder-layers)
+            NUM_DECODER_LAYERS="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false]"
+            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false] [--num-decoder-layers N_LAYERS]"
             exit 0
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false]"
+            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false] [--num-decoder-layers N_LAYERS]"
             exit 1
             ;;
     esac
 done
+
+if [[ "$TRACE" == "true" ]]; then
+  OUTPUT_DIR_TAG="trace${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}"
+fi
 
 # Now your variables are set as needed
 echo "MODEL=$MODEL"
@@ -59,7 +68,7 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MAXTEXT_DIR="$(realpath "$SCRIPT_DIR/../../")"
-OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL}${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}_${TIMESTAMP}"
+OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL}${NUM_DECODER_LAYERS:+_${NUM_DECODER_LAYERS}_layers}${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}_${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 
 n_gpus=$(nvidia-smi -L | wc -l)
@@ -85,7 +94,9 @@ run_and_parse() {
   local tp="$3"
   local tpsp="$4"
   local fsdp="$5"
+  set +e
   local cmd="$6"
+  set -e
   local stdout="$OUTPUT_DIR/run_${test}_dp${dp}_tp${tp}_tpsp${tpsp}_fsdp${fsdp}.log"
   echo "===== Executing ${test}\t${dp}\t${tp}\t${tpsp}\t${fsdp} ====="
   eval "$cmd" 2>&1 | tee "$stdout"
@@ -122,13 +133,32 @@ else:
 }
 
 PROFILE_SKIP_STEPS=$(($STEPS-1))
-PROFILER=\'\'   # empty = no profiler
-[[ "$TRACE" == "true" ]] && PROFILER="xplane"
+PROFILE_ARG=""
+original_num_decoder_layers=1
+if [[ "$TRACE" == "true" ]]; then
+  PROFILE_ARG="profiler=xplane skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1"
+fi
+# Updating the model config file as we can't pass base_num_decoder_layers=1 in additional-args
+if [ -n "$NUM_DECODER_LAYERS" ]; then
+  MODEL_CONFIG="$MAXTEXT_DIR/MaxText/configs/models/$MODEL.yml"
+  original_num_decoder_layers=$(grep "base_num_decoder_layers" "$MODEL_CONFIG" | awk -F': ' '{print $2}')
+  sed -i "s/base_num_decoder_layers: .*/base_num_decoder_layers: $NUM_DECODER_LAYERS/" "$MODEL_CONFIG"
+  echo "=== Setting base_num_decoder_layers=$NUM_DECODER_LAYERS in $MODEL_CONFIG"
+fi
+
+# Updating the model config file back if modified
+restore_model_config_file() {
+  if [ -n "$NUM_DECODER_LAYERS" ]; then
+    sed -i "s/base_num_decoder_layers: .*/base_num_decoder_layers: ${original_num_decoder_layers}/" "$MODEL_CONFIG"
+    echo "=== Restoring base_num_decoder_layers back to ${original_num_decoder_layers} in $MODEL_CONFIG"
+  fi
+}
+trap restore_model_config_file EXIT
 
 BASE_ARGS="--model $MODEL --steps $STEPS"
 # Need to be with four escape quotes
-OTHER_ARGS="--additional-args=\"\"\"fused_mlp=true shardy=false profiler=${PROFILER} skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1\"\"\""  
-TE_RECIPES=("te_fp8_delayedscaling" "te_mxfp8")
+OTHER_ARGS="--additional-args=\"\"\"fused_mlp=true shardy=false ${PROFILE_ARG}\"\"\""
+TRAINING_RECIPES=("fp8" "te_fp8_delayedscaling" "te_mxfp8")   # fp8 is the MaxText baseline
 
 export NVTE_JAX_CUSTOM_CALLS='NormFwdPrimitive=false,NormBwdPrimitive=false'
 
@@ -141,8 +171,8 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   exp="${experiments[$i]}"
   echo "Running experiment: $exp"
   read dp tp tpsp fsdp <<< "$exp"
-  
-  n_used_gpus=$((dp * tp * tpsp * fsdp)) 
+
+  n_used_gpus=$((dp * tp * tpsp * fsdp))
   if (( n_used_gpus > n_gpus )); then
     echo "Error: requested $n_used_gpus GPUs, but only $n_gpus are available."
     exit 1
@@ -153,18 +183,13 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
 
   args="--data-parallel=$dp --tensor-parallel=$tp --tensor-sequence-parallel=$tpsp --fsdp=$fsdp"
 
-  # MaxText FP8 baseline
-  test="maxtext_fp8"
-  run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --dtype=fp8 $BASE_ARGS $OTHER_ARGS"
-
-  # TE variants
-  for recipe in "${TE_RECIPES[@]}"; do
+  for recipe in "${TRAINING_RECIPES[@]}"; do
     test="${recipe}"
     run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-      "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
+      "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash ${SCRIPT_DIR}/test-maxtext-te.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
   done
 done
+
 
 OUTPUT_FORMAT="txt" # txt or csv
 echo "=== Experiments finished. Raw CSV at $CSV"

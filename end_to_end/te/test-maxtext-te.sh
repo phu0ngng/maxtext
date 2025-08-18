@@ -117,10 +117,6 @@ while [ : ]; do
         QUANTIZATION="$2"
         shift 2
         ;;
-    --enable-te)
-        ENABLE_TE=1
-        shift 1
-        ;;
     -s | --steps)
         STEPS="$2"
         shift 2
