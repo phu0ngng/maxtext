@@ -94,7 +94,9 @@ run_and_parse() {
   local tp="$3"
   local tpsp="$4"
   local fsdp="$5"
+  set +e
   local cmd="$6"
+  set -e
   local stdout="$OUTPUT_DIR/run_${test}_dp${dp}_tp${tp}_tpsp${tpsp}_fsdp${fsdp}.log"
   echo "===== Executing ${test}\t${dp}\t${tp}\t${tpsp}\t${fsdp} ====="
   eval "$cmd" 2>&1 | tee "$stdout"
@@ -156,7 +158,7 @@ trap restore_model_config_file EXIT
 BASE_ARGS="--model $MODEL --steps $STEPS"
 # Need to be with four escape quotes
 OTHER_ARGS="--additional-args=\"\"\"fused_mlp=true shardy=false ${PROFILE_ARG}\"\"\""
-TE_RECIPES=("te_fp8_delayedscaling" "te_mxfp8")
+TRAINING_RECIPES=("fp8" "te_fp8_delayedscaling" "te_mxfp8")   # fp8 is the MaxText baseline
 
 export NVTE_JAX_CUSTOM_CALLS='NormFwdPrimitive=false,NormBwdPrimitive=false'
 
@@ -181,16 +183,10 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
 
   args="--data-parallel=$dp --tensor-parallel=$tp --tensor-sequence-parallel=$tpsp --fsdp=$fsdp"
 
-  # MaxText FP8 baseline
-  test="maxtext_fp8"
-  run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=\"fp8\" $BASE_ARGS $OTHER_ARGS"
-
-  # TE variants
-  for recipe in "${TE_RECIPES[@]}"; do
+  for recipe in "${TRAINING_RECIPES[@]}"; do
     test="${recipe}"
     run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-      "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
+      "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash ${SCRIPT_DIR}/test-maxtext-te.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
   done
 done
 

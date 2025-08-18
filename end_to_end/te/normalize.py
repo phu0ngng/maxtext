@@ -34,7 +34,7 @@ rows = []
 # iterate keys in first-seen order
 for key in key_order:
     rowset = data[key]
-    baseline = rowset.get("maxtext_fp8", {})
+    baseline = rowset.get("fp8", {})
     base_mean = baseline.get("mean", "NA")
     try:
         base_mean_val = float(base_mean)
@@ -49,7 +49,8 @@ for key in key_order:
         stddev = row["stddev"]
         if mean == "NA":
             normalized = "-"
-        elif testname == "maxtext_fp8":
+        elif testname == "fp8":
+            testname = "maxtext_fp8"
             normalized = "0.00%" if has_baseline else "-"
         elif has_baseline and mean != "NA":
             try:
