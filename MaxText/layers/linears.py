@@ -348,6 +348,8 @@ class MlpBlock(nnx.Module):
     self.te_ln_mlp = None
     if self.config.quantization.startswith("te_"):
       self.te_ln_mlp = self.quant.layernorm_mlp(self, rngs=rngs)
+      if self.te_ln_mlp is not None and self.intermediate_dropout_rate > 0.0:
+        raise ValueError(f"TransformerEngine fused MLP block does not support dropout, current value of 'dropout_rate' is {self.intermediate_dropout_rate}. Please set 'dropout_rate' to 0.0 in the config, disable some fused kernels by setting 'fused_mlp' to False, or change the quantization mode from '{self.config.quantization}'.")
 
     if self.use_pre_norm:
       self.mlp_layer_norm = self.get_norm_layer(num_features=in_features)(
