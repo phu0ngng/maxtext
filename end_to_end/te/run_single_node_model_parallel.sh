@@ -7,6 +7,7 @@ OUTPUT_DIR_TAG=""
 STEPS=50
 TRACE=false
 SINGLE_GPU_RUNS=true
+NUM_DECODER_LAYERS="" # unset
 
 # Parse keyword-style arguments
 while [[ $# -gt 0 ]]; do
@@ -31,19 +32,25 @@ while [[ $# -gt 0 ]]; do
             SINGLE_GPU_RUNS="$2"
             shift 2
             ;;
+        --num-decoder-layers)
+            NUM_DECODER_LAYERS="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false]"
+            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false] [--num-decoder-layers N_LAYERS]"
             exit 0
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false]"
+            echo "Usage: $0 [--model MODEL] [--output-dir-tag OUTPUT_DIR_TAG] [--trace true|false] [--steps STEPS] [--single-gpu-run true|false] [--num-decoder-layers N_LAYERS]"
             exit 1
             ;;
     esac
 done
 
-[[ "$TRACE" == "true" ]] && OUTPUT_DIR_TAG="trace${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}"
+if [[ "$TRACE" == "true" ]]; then
+  OUTPUT_DIR_TAG="trace${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}"
+fi
 
 # Now your variables are set as needed
 echo "MODEL=$MODEL"
@@ -61,7 +68,7 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MAXTEXT_DIR="$(realpath "$SCRIPT_DIR/../../")"
-OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL}${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}_${TIMESTAMP}"
+OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL}${NUM_DECODER_LAYERS:+_${NUM_DECODER_LAYERS}_layers}${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}_${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 
 n_gpus=$(nvidia-smi -L | wc -l)
@@ -128,12 +135,23 @@ PROFILE_ARG=""
 original_num_decoder_layers=1
 if [[ "$TRACE" == "true" ]]; then
   PROFILE_ARG="profiler=xplane skip_first_n_steps_for_profiler=${PROFILE_SKIP_STEPS} profiler_steps=1"
-  # Updating the model config file as we can't pass base_num_decoder_layers=1 in additional-args
+fi
+# Updating the model config file as we can't pass base_num_decoder_layers=1 in additional-args
+if [ -n "$NUM_DECODER_LAYERS" ]; then
   MODEL_CONFIG="$MAXTEXT_DIR/MaxText/configs/models/$MODEL.yml"
   original_num_decoder_layers=$(grep "base_num_decoder_layers" "$MODEL_CONFIG" | awk -F': ' '{print $2}')
-  sed -i 's/base_num_decoder_layers: .*/base_num_decoder_layers: 1/' "$MODEL_CONFIG"
-  echo "=== Setting base_num_decoder_layers=1 in $MODEL_CONFIG for tracing"
+  sed -i "s/base_num_decoder_layers: .*/base_num_decoder_layers: $NUM_DECODER_LAYERS/" "$MODEL_CONFIG"
+  echo "=== Setting base_num_decoder_layers=$NUM_DECODER_LAYERS in $MODEL_CONFIG"
 fi
+
+# Updating the model config file back if modified
+restore_model_config_file() {
+  if [ -n "$NUM_DECODER_LAYERS" ]; then
+    sed -i "s/base_num_decoder_layers: .*/base_num_decoder_layers: ${original_num_decoder_layers}/" "$MODEL_CONFIG"
+    echo "=== Restoring base_num_decoder_layers back to ${original_num_decoder_layers} in $MODEL_CONFIG"
+  fi
+}
+trap restore_model_config_file EXIT
 
 BASE_ARGS="--model $MODEL --steps $STEPS"
 # Need to be with four escape quotes
@@ -166,7 +184,7 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   # MaxText FP8 baseline
   test="maxtext_fp8"
   run_and_parse "$test" "$dp" "$tp" "$tpsp" "$fsdp" \
-    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=fp8 $BASE_ARGS $OTHER_ARGS"
+    "PYTHONPATH=${MAXTEXT_DIR} MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext-te.sh $args --quantization=\"fp8\" $BASE_ARGS $OTHER_ARGS"
 
   # TE variants
   for recipe in "${TE_RECIPES[@]}"; do
@@ -176,11 +194,6 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   done
 done
 
-# Updating the model config file back if modified
-if [[ "$TRACE" == "true" ]]; then
-  sed -i 's/base_num_decoder_layers: .*/base_num_decoder_layers: "$original_num_decoder_layers"/' "$MODEL_CONFIG"
-  echo "=== Setting base_num_decoder_layers back to $original_num_decoder_layers in $MODEL_CONFIG"
-fi
 
 OUTPUT_FORMAT="txt" # txt or csv
 echo "=== Experiments finished. Raw CSV at $CSV"
