@@ -444,8 +444,19 @@ class MlpBlock(nnx.Module):
     """Applies Transformer MlpBlock module."""
     cfg = self.config
 
+
     if self.mlp_layer_norm is not None:
       inputs = self.mlp_layer_norm(inputs)
+      if self.model_mode == MODEL_MODE_PREFILL:
+        inputs = nn.with_logical_constraint(inputs, ("activation_batch",
+                                                     "prefill_activation_norm_length",
+                                                     "activation_embed")
+                                            )
+      else:
+        inputs = nn.with_logical_constraint(inputs, ("activation_batch",
+                                                     "activation_norm_length",
+                                                     "activation_embed")
+                                            )
 
     # Iterate over specified MLP input activation functions.
     # e.g. ('relu',) or ('gelu', 'linear') for gated-gelu.
