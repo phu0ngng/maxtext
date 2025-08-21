@@ -795,15 +795,6 @@ class TransformerEngineQuantization(Quantization):
     """
 
     import transformer_engine.jax as te
-    from transformer_engine.jax.sharding import global_shard_guard, MeshResource
-    # Inform TransformerEngine of MaxText's physical mesh resources.
-    mesh_resource = MeshResource(
-      dp_resource = "data",
-      tp_resource = "tensor",
-      fsdp_resource = "fsdp",
-      pp_resource = None,
-      cp_resource = "context",
-    )
     fp8_recipe = self._recipe
 
     class TEWrapper(te.flax.module.TransformerEngineBase):
@@ -813,8 +804,7 @@ class TransformerEngineQuantization(Quantization):
 
       @nn.compact
       def __call__(self, *args, **kwargs):
-        with global_shard_guard(mesh_resource):
-          return f(self.generate_quantizer_set, *args, **kwargs)
+        return f(self.generate_quantizer_set, *args, **kwargs)
 
     TEWrapper.__name__ = f'TEWrapper_{name if name else f.__name__}'
 
