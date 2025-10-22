@@ -1,4 +1,0 @@
-test	dp	tp	tpsp	fsdp	mean	stddev	normalized
-maxtext_fp8	1	1	2	2	7609.12	2.08	0.00%
-te_fp8_delayedscaling	1	1	2	2	8589.83	2.77	12.89%
-te_mxfp8	1	1	2	2	8227.26	2.82	8.12%
