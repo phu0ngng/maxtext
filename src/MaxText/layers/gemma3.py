@@ -147,6 +147,7 @@ class Gemma3DecoderLayer(nnx.Module):
         rngs=self.rngs,
     )
 
+    use_te = self.config.quantization is not None and self.config.quantization.startswith("te_")
     self.mlp = MlpBlock(
         in_features=config.emb_dim,
         intermediate_dim=config.mlp_dim,
@@ -217,7 +218,7 @@ class Gemma3DecoderLayer(nnx.Module):
     # MLP block.
     use_te = self.config.quantization is not None and self.config.quantization.startswith("te_")
     if use_te:
-        mlp_lnx = self.mlp(intermediate_inputs, deterministic=deterministic)
+        mlp_lnx = self.mlp(attention_lnx, deterministic=deterministic)
     else:
         attn_output = self.pre_ffw_norm(attention_lnx)
         mlp_lnx = self.mlp(attn_output, deterministic=deterministic)
