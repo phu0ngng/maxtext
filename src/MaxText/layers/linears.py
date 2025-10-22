@@ -30,7 +30,8 @@ import flax.linen as nn
 
 from MaxText import max_logging
 from MaxText import max_utils
-from MaxText.common_types import MODEL_MODE_PREFILL, DecoderBlockType, DType, Array, Config
+from MaxText.common_types import DecoderBlockType, DType, Array, Config
+from MaxText.common_types import MODEL_MODE_TRAIN, MODEL_MODE_PREFILL, EP_AS_CONTEXT
 from MaxText.layers import nnx_wrappers, quantizations
 from MaxText.layers import normalizations
 from MaxText.layers.initializers import NdInitializer, nd_dense_init, default_bias_init, variable_to_logically_partitioned
@@ -474,7 +475,10 @@ class MlpBlock(nnx.Module):
       dot_1_input_axes = ("activation_batch",
                           "activation_norm_length",
                           "activation_embed")
-      dot_2_input_axes = ("activation_batch", "activation_length", "activation_mlp")
+      if cfg.expert_shard_attention_option == EP_AS_CONTEXT and self.model_mode == MODEL_MODE_TRAIN:
+        dot_2_input_axes = ("activation_batch_no_exp", "activation_length", "activation_mlp")
+      else:
+        dot_2_input_axes = ("activation_batch", "activation_length", "activation_mlp")
 
     if self.te_ln_mlp is not None:
       return self.te_ln_mlp(inputs, dot_1_input_axes, dot_2_input_axes)
