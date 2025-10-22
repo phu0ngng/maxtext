@@ -765,6 +765,7 @@ class TransformerEngineQuantization(Quantization):
     from transformer_engine.common import recipe
     if isinstance(self._recipe, recipe.MXFP8BlockScaling):
       return 32
+    # TODO(Jeremy) Reduced the blocksize to 16 when non-fused RHT is supported.
     if isinstance(self._recipe, recipe.NVFP4BlockScaling):
       return 64
     return 1
