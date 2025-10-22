@@ -1,0 +1,15 @@
+test	dp	tp	tpsp	fsdp	mean	stddev
+te_fp8_delayedscaling	1	4	1	1	137853.35	438.14
+te_mxfp8	1	4	1	1	138932.03	363.25
+te_fp8_delayedscaling	4	1	1	1	108886.29	341.96
+te_mxfp8	4	1	1	1	110675.23	372.63
+te_fp8_delayedscaling	2	2	1	1	124291.48	410.26
+te_mxfp8	2	2	1	1	122963.70	794.98
+te_fp8_delayedscaling	1	1	4	1	136567.64	613.59
+te_mxfp8	1	1	4	1	130239.56	398.70
+te_fp8_delayedscaling	2	1	2	1	119632.57	360.30
+te_mxfp8	2	1	2	1	116709.00	558.73
+te_fp8_delayedscaling	1	1	1	4	155021.80	768.08
+te_mxfp8	1	1	1	4	150832.46	749.67
+te_fp8_delayedscaling	1	1	2	2	130767.26	850.25
+te_mxfp8	1	1	2	2	126018.64	227.42

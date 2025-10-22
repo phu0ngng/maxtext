@@ -1,0 +1,9 @@
+test	dp	tp	tpsp	fsdp	mean	stddev	normalized
+maxtext_fp8	1	1	1	1	132394.94	496.66	0.00%
+te_fp8_currentscaling	1	1	1	1	141479.55	430.40	6.86%
+maxtext_fp8	2	1	2	1	114112.84	283.40	0.00%
+te_fp8_currentscaling	2	1	2	1	120064.16	780.27	5.22%
+maxtext_fp8	1	1	1	4	148662.81	497.34	0.00%
+te_fp8_currentscaling	1	1	1	4	152694.64	1203.42	2.71%
+maxtext_fp8	1	1	2	2	124183.67	478.70	0.00%
+te_fp8_currentscaling	1	1	2	2	130775.08	527.99	5.31%

@@ -1,0 +1,5 @@
+test	dp	tp	tpsp	fsdp	mean	stddev
+maxtext_fp8	1	4	1	1	8585.71	6.75
+te_fp8_DelayedScaling	1	4	1	1	7261.20	31.61
+te_fp8_MXFP8BlockScaling	1	4	1	1	7497.89	4.88
+maxtext_fp8	4	1	1	1	8035.22	17.48

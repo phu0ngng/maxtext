@@ -1,0 +1,9 @@
+test	dp	tp	tpsp	fsdp	mean	stddev
+fp8	1	1	1	1	132387.21	320.50
+te_fp8_currentscaling	1	1	1	1	141188.07	442.89
+fp8	2	1	2	1	114157.08	570.50
+te_fp8_currentscaling	2	1	2	1	119857.59	423.98
+fp8	1	1	1	4	148611.52	821.24
+te_fp8_currentscaling	1	1	1	4	152474.18	637.05
+fp8	1	1	2	2	124089.27	465.39
+te_fp8_currentscaling	1	1	2	2	130347.67	276.86

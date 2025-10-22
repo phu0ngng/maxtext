@@ -1,0 +1,9 @@
+test	dp	tp	tpsp	fsdp	mean	stddev
+te_mxfp8	1	1	1	1	8009.07	2.45
+te_mxfp8	1	4	1	1	6494.24	1.07
+te_mxfp8	4	1	1	1	7363.11	1.33
+te_mxfp8	2	2	1	1	7003.57	2.00
+te_mxfp8	1	1	4	1	7722.64	2.74
+te_mxfp8	2	1	2	1	7707.33	8.39
+te_mxfp8	1	1	1	4	8605.83	1.73
+te_mxfp8	1	1	2	2	8112.54	2.56
